@@ -1,7 +1,7 @@
 // Returns latest reading + history for the dashboard
 // GET /api/data
 
-import fs from 'fs';
+const fs = require('fs');
 
 const DATA_FILE = '/tmp/iot-data.json';
 const HAS_KV = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
@@ -9,7 +9,7 @@ const HAS_KV = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 async function readFromKV() {
   const { kv } = await import('@vercel/kv');
   const latest = await kv.get('latest');
-  const raw = await kv.lrange('history', 0, 49);
+  const raw    = await kv.lrange('history', 0, 49);
   const history = raw.map(h => (typeof h === 'string' ? JSON.parse(h) : h));
   return { latest, history };
 }
@@ -24,7 +24,7 @@ function readFromFile() {
   return { latest: null, history: [] };
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
 
@@ -35,4 +35,4 @@ export default async function handler(req, res) {
     console.error('Read error:', err);
     return res.status(200).json({ latest: null, history: [], error: err.message });
   }
-}
+};

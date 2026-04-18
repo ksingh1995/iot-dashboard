@@ -1,16 +1,14 @@
 // IoT Data Receiver — matches ThingSpeak URL format exactly
 // GET /api/update?api_key=XXX&field1=TEMP&field2=HUMIDITY
 //
-// To migrate the IoT device: just change server[] from
-// "api.thingspeak.com" → "your-app.vercel.app" in the Arduino code.
+// To migrate from ThingSpeak: just change server[] in Arduino code from
+// "api.thingspeak.com" → "your-app.vercel.app"
 
-import fs from 'fs';
-import path from 'path';
+const fs = require('fs');
 
 const DATA_FILE = '/tmp/iot-data.json';
 const MAX_HISTORY = 100;
 
-// Try to use Vercel KV if available, else use /tmp file
 const HAS_KV = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 
 async function saveToKV(reading) {
@@ -18,8 +16,7 @@ async function saveToKV(reading) {
   await kv.set('latest', reading);
   await kv.lpush('history', JSON.stringify(reading));
   await kv.ltrim('history', 0, MAX_HISTORY - 1);
-  const count = await kv.llen('history');
-  return count;
+  return await kv.llen('history');
 }
 
 function saveToFile(reading) {
@@ -38,12 +35,7 @@ function saveToFile(reading) {
   return data.history.length;
 }
 
-export default async function handler(req, res) {
-  // Allow GET (what the Arduino code sends)
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
+module.exports = async function handler(req, res) {
   const { api_key, field1, field2 } = req.query;
 
   // Validate API key
@@ -53,7 +45,7 @@ export default async function handler(req, res) {
   }
 
   const temp = parseFloat(field1);
-  const hum = parseFloat(field2);
+  const hum  = parseFloat(field2);
 
   if (isNaN(temp) || isNaN(hum)) {
     return res.status(400).json({ error: 'Invalid sensor data', field1, field2 });
@@ -61,28 +53,23 @@ export default async function handler(req, res) {
 
   const reading = {
     temp: Math.round(temp * 10) / 10,
-    hum: Math.round(hum * 10) / 10,
+    hum:  Math.round(hum  * 10) / 10,
     timestamp: new Date().toISOString()
   };
 
   try {
-    let entryId;
-    if (HAS_KV) {
-      entryId = await saveToKV(reading);
-    } else {
-      entryId = saveToFile(reading);
-    }
+    const entryId = HAS_KV ? await saveToKV(reading) : saveToFile(reading);
 
-    // ThingSpeak-compatible response so Arduino code gets a valid reply
+    // ThingSpeak-compatible response — Arduino code expects this format
     return res.status(200).json({
-      entry_id: entryId,
+      entry_id:   entryId,
       channel_id: 1,
       created_at: reading.timestamp,
-      field1: reading.temp,
-      field2: reading.hum
+      field1:     reading.temp,
+      field2:     reading.hum
     });
   } catch (err) {
     console.error('Save error:', err);
     return res.status(500).json({ error: 'Storage error', detail: err.message });
   }
-}
+};
