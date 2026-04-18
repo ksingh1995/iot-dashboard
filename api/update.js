@@ -1,44 +1,72 @@
 // IoT Data Receiver — matches ThingSpeak URL format exactly
 // GET /api/update?api_key=XXX&field1=TEMP&field2=HUMIDITY
-//
-// To migrate from ThingSpeak: just change server[] in Arduino code from
-// "api.thingspeak.com" → "your-app.vercel.app"
 
-const fs = require('fs');
+const https = require('https');
 
-const DATA_FILE = '/tmp/iot-data.json';
 const MAX_HISTORY = 100;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const REPO = 'ksingh1995/iot-dashboard';
+const BRANCH = 'data';
+const FILE = 'iot-data.json';
 
-const HAS_KV = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-
-async function saveToKV(reading) {
-  const { kv } = await import('@vercel/kv');
-  await kv.set('latest', reading);
-  await kv.lpush('history', JSON.stringify(reading));
-  await kv.ltrim('history', 0, MAX_HISTORY - 1);
-  return await kv.llen('history');
+// GitHub API helper
+function githubRequest(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const req = https.request({
+      hostname: 'api.github.com',
+      path,
+      method,
+      headers: {
+        'Authorization': `token ${GITHUB_TOKEN}`,
+        'User-Agent': 'iot-dashboard',
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github.v3+json',
+        ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {})
+      }
+    }, (res) => {
+      let raw = '';
+      res.on('data', chunk => raw += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(raw)); }
+        catch { resolve(raw); }
+      });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
 }
 
-function saveToFile(reading) {
-  let data = { latest: null, history: [] };
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    }
-  } catch (_) {}
+async function saveToGitHub(reading) {
+  // Get current file (need SHA to update)
+  const existing = await githubRequest('GET', `/repos/${REPO}/contents/${FILE}?ref=${BRANCH}`);
 
-  data.latest = reading;
-  data.history.unshift(reading);
-  if (data.history.length > MAX_HISTORY) data.history = data.history.slice(0, MAX_HISTORY);
+  let store = { latest: null, history: [] };
+  if (existing.content) {
+    try {
+      store = JSON.parse(Buffer.from(existing.content, 'base64').toString('utf8'));
+    } catch (_) {}
+  }
 
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data));
-  return data.history.length;
+  store.latest = reading;
+  store.history.unshift(reading);
+  if (store.history.length > MAX_HISTORY) store.history = store.history.slice(0, MAX_HISTORY);
+
+  const content = Buffer.from(JSON.stringify(store)).toString('base64');
+  await githubRequest('PUT', `/repos/${REPO}/contents/${FILE}`, {
+    message: `IoT update: ${reading.temp}°C / ${reading.hum}%`,
+    content,
+    sha: existing.sha,
+    branch: BRANCH
+  });
+
+  return store.history.length;
 }
 
 module.exports = async function handler(req, res) {
   const { api_key, field1, field2 } = req.query;
 
-  // Validate API key
   const expectedKey = process.env.API_KEY || 'AYKELL4MXR7ZIIEM';
   if (api_key !== expectedKey) {
     return res.status(401).json({ error: 'Invalid API key' });
@@ -46,9 +74,8 @@ module.exports = async function handler(req, res) {
 
   const temp = parseFloat(field1);
   const hum  = parseFloat(field2);
-
   if (isNaN(temp) || isNaN(hum)) {
-    return res.status(400).json({ error: 'Invalid sensor data', field1, field2 });
+    return res.status(400).json({ error: 'Invalid sensor data' });
   }
 
   const reading = {
@@ -58,15 +85,13 @@ module.exports = async function handler(req, res) {
   };
 
   try {
-    const entryId = HAS_KV ? await saveToKV(reading) : saveToFile(reading);
-
-    // ThingSpeak-compatible response — Arduino code expects this format
+    const entryId = await saveToGitHub(reading);
     return res.status(200).json({
-      entry_id:   entryId,
+      entry_id: entryId,
       channel_id: 1,
       created_at: reading.timestamp,
-      field1:     reading.temp,
-      field2:     reading.hum
+      field1: reading.temp,
+      field2: reading.hum
     });
   } catch (err) {
     console.error('Save error:', err);
