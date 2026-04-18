@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IoT Monitor — SIM7600 + DHT11</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0f1e;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0f172a;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 700; }
+    header p  { font-size: 0.75rem; color: #475569; margin-top: 2px; }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      background: #1e293b;
+      padding: 6px 12px;
+      border-radius: 99px;
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-green  { background: #22c55e; box-shadow: 0 0 6px #22c55e88; animation: pulse 2s infinite; }
+    .dot-yellow { background: #eab308; }
+    .dot-red    { background: #ef4444; }
+    .dot-grey   { background: #475569; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.5; }
+    }
+
+    /* ── Main ── */
+    main { max-width: 900px; margin: 0 auto; padding: 24px; }
+
+    /* ── Cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 28px 24px;
+    }
+    .card-icon { font-size: 1.5rem; margin-bottom: 8px; }
+    .card-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+      margin-bottom: 12px;
+    }
+    .card-value {
+      font-size: 3.5rem;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+    .card-unit { font-size: 1.5rem; font-weight: 400; color: #64748b; margin-left: 4px; }
+    .temp-card .card-value { color: #f97316; }
+    .hum-card  .card-value { color: #38bdf8; }
+
+    /* ── Chart ── */
+    .section {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #475569;
+      margin-bottom: 16px;
+    }
+    canvas { width: 100%; display: block; border-radius: 8px; }
+
+    /* ── Table ── */
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      text-align: left;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #475569;
+      padding: 0 8px 10px;
+      border-bottom: 1px solid #1e293b;
+    }
+    tbody tr { border-bottom: 1px solid #0f172a; }
+    tbody tr:hover td { background: #1e293b22; }
+    tbody td { padding: 10px 8px; font-size: 0.85rem; }
+    .t-time { color: #64748b; }
+    .t-temp { color: #f97316; font-weight: 600; }
+    .t-hum  { color: #38bdf8; font-weight: 600; }
+    .empty-row td { text-align: center; color: #334155; padding: 32px; font-size: 0.9rem; }
+
+    /* ── Arduino snippet ── */
+    .code-box {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .code-box h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: #475569; margin-bottom: 12px; }
+    pre {
+      font-family: 'Fira Code', 'Courier New', monospace;
+      font-size: 0.78rem;
+      color: #94a3b8;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    pre span.hl { color: #22c55e; font-weight: 600; }
+
+    @media (max-width: 480px) {
+      .cards { grid-template-columns: 1fr; }
+      .card-value { font-size: 2.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🌡️ IoT Monitor</h1>
+    <p>SIM7600 + DHT11 · Airtel Cellular</p>
+  </div>
+  <div class="status-badge">
+    <div class="dot dot-grey" id="statusDot"></div>
+    <span id="statusText">Connecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- Cards -->
+  <div class="cards">
+    <div class="card temp-card">
+      <div class="card-icon">🌡️</div>
+      <div class="card-label">Temperature</div>
+      <div class="card-value" id="temp">--<span class="card-unit">°C</span></div>
+    </div>
+    <div class="card hum-card">
+      <div class="card-icon">💧</div>
+      <div class="card-label">Humidity</div>
+      <div class="card-value" id="hum">--<span class="card-unit">%</span></div>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="section">
+    <div class="section-title">📈 Temperature History (last 50 readings)</div>
+    <canvas id="chartCanvas" height="80"></canvas>
+  </div>
+
+  <!-- History Table -->
+  <div class="section">
+    <div class="section-title">📋 Recent Readings</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Temperature</th>
+          <th>Humidity</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody">
+        <tr class="empty-row"><td colspan="3">Waiting for first reading from device…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Arduino Code Helper -->
+  <div class="code-box">
+    <h3>🔌 Arduino — One-Line Change</h3>
+    <pre>// Change <span class="hl">only this line</span> in your Arduino sketch:
+const char server[] = "<span class="hl" id="hostHint">your-app.vercel.app</span>";
+// api_key, field1, field2 — everything else stays the same ✅</pre>
+  </div>
+</main>
+
+<script>
+  // Fill in the current hostname automatically
+  document.getElementById('hostHint').textContent = location.hostname;
+
+  let lastTimestamp = null;
+  let tickInterval = null;
+
+  // ─── Status dot ───────────────────────────────────────
+  function updateStatus(ts) {
+    const dot  = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    if (!ts) {
+      dot.className = 'dot dot-grey';
+      text.textContent = 'No data yet';
+      return;
+    }
+    const age = (Date.now() - new Date(ts)) / 1000;
+    if (age < 30) {
+      dot.className = 'dot dot-green';
+      text.textContent = `Live · ${Math.floor(age)}s ago`;
+    } else if (age < 120) {
+      dot.className = 'dot dot-yellow';
+      text.textContent = `${Math.round(age)}s ago`;
+    } else {
+      dot.className = 'dot dot-red';
+      text.textContent = `Offline · ${Math.round(age / 60)}m ago`;
+    }
+  }
+
+  // ─── Chart ───────────────────────────────────────────
+  function drawChart(history) {
+    const canvas = document.getElementById('chartCanvas');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = canvas.offsetWidth * dpr;
+    canvas.height = 100 * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const W = canvas.offsetWidth;
+    const H = 100;
+    const temps = [...history].reverse().map(d => d.temp);
+    if (temps.length < 2) return;
+
+    const min = Math.min(...temps) - 0.5;
+    const max = Math.max(...temps) + 0.5;
+    const xStep = W / (temps.length - 1);
+
+    // Gradient fill
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, 'rgba(249,115,22,0.35)');
+    grad.addColorStop(1, 'rgba(249,115,22,0)');
+
+    const pts = temps.map((t, i) => ({
+      x: i * xStep,
+      y: H - ((t - min) / (max - min)) * (H - 10) - 5
+    }));
+
+    // Fill
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.moveTo(pts[0].x, pts[0].y);
+    pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.stroke();
+
+    // Latest value label
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = '#f97316';
+    ctx.font = `bold ${12 * dpr / dpr}px system-ui`;
+    ctx.fillText(`${temps[temps.length - 1].toFixed(1)}°C`, last.x - 28, last.y - 6);
+  }
+
+  // ─── History table ────────────────────────────────────
+  function renderTable(history) {
+    const tbody = document.getElementById('historyBody');
+    if (!history || history.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="3">No readings yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = history.map(d => {
+      const t = new Date(d.timestamp);
+      const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return `<tr>
+        <td class="t-time">${time}</td>
+        <td class="t-temp">${d.temp.toFixed(1)} °C</td>
+        <td class="t-hum">${d.hum.toFixed(1)} %</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ─── Main fetch ──────────────────────────────────────
+  async function fetchData() {
+    try {
+      const res  = await fetch('/api/data');
+      const data = await res.json();
+
+      if (data.latest) {
+        document.getElementById('temp').innerHTML =
+          `${data.latest.temp.toFixed(1)}<span class="card-unit">°C</span>`;
+        document.getElementById('hum').innerHTML =
+          `${data.latest.hum.toFixed(1)}<span class="card-unit">%</span>`;
+        lastTimestamp = data.latest.timestamp;
+        updateStatus(lastTimestamp);
+      } else {
+        updateStatus(null);
+      }
+
+      drawChart(data.history || []);
+      renderTable(data.history || []);
+    } catch (e) {
+      console.error('Fetch failed:', e);
+    }
+  }
+
+  // Tick the status badge every second (age counter)
+  if (tickInterval) clearInterval(tickInterval);
+  tickInterval = setInterval(() => updateStatus(lastTimestamp), 1000);
+
+  // Main loop — match IoT device 15s interval
+  fetchData();
+  setInterval(fetchData, 15000);
+
+  // Redraw chart on resize
+  window.addEventListener('resize', () => {
+    fetch('/api/data').then(r => r.json()).then(d => drawChart(d.history || []));
+  });
+</script>
+</body>
+</html>

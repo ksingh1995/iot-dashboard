@@ -1,0 +1,9 @@
+{
+  "name": "iot-dashboard",
+  "version": "1.0.0",
+  "description": "IoT Temperature & Humidity Dashboard for SIM7600 + DHT11",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@vercel/kv": "^3.0.0"
+  }
+}
